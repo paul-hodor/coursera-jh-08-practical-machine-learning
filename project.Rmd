@@ -1,0 +1,276 @@
+---
+title: |
+ | Practical Machine Learning: Course Project
+ | Predict Exercise Class
+author: by N. Ona-Mae, U. N. Owen, and A. N. Onymous
+output: html_document
+---
+
+
+```{r echo=FALSE, warning=FALSE}
+
+################################################################################
+## This section contains all the R code
+
+## Set the root directory and clear the workspace
+
+rootdir = '/Volumes/paul/data/study/coursera/012.jh-08-practical-machine-learning/03.work/project/'
+setwd(rootdir)
+rm(list=ls())
+
+
+## Read data files
+
+data.all = read.csv("pml-training.csv",stringsAsFactors=FALSE)
+data.all = data.all[,-1]
+
+data.submit = read.csv("pml-testing.csv",stringsAsFactors=FALSE)
+data.submit = data.submit[,-1]
+
+
+## Activity quality is variable "classe" This is what we want to predict. Make
+## it a factor.
+
+data.all$classe = factor(data.all$classe)
+
+## divide data into training and validation sets
+
+library(caret)
+
+set.seed("20150612")
+sel.train = createDataPartition(data.all$classe,p=0.8,list=FALSE)
+
+training.original = data.all[sel.train,]
+training = training.original
+validation = data.all[-sel.train,]
+
+
+## Explore the variables and decide what to keep
+
+# table(sapply(training,class))
+# character   integer   numeric 
+#        37        34        88 
+
+## What is the number of empty strings in character variables
+# sapply(training[,sapply(training,class) == "character"],function(x) sum(x==""))
+# sapply(training[,sapply(training,class) == "character"],function(x) sum(x!=""))
+
+pcent.miss.char = sapply(training[,sapply(training,class) ==
+    "character"],function(x) sum(x=="")) / nrow(training)
+# table(pcent.miss.char)
+##  0 0.979616536085101 
+##  4                33 
+## There are 4 variables with no missing data, 33 variables with mostly missing
+## data. Exclude the latter.
+excl.char = names(pcent.miss.char[pcent.miss.char > 0.9])
+
+## Missing values in integer variables
+pcent.miss.int = sapply(training[,sapply(training,class) ==
+"integer"],function(x) sum(is.na(x))) / nrow(training)
+# table(pcent.miss.int)
+##   0 0.979616536085101 
+##  28                 6 
+## Exclude 6 integer variables with mostly NAs
+excl.int = names(pcent.miss.int[pcent.miss.int > 0.9])
+
+## Missing values in numeric variables
+pcent.miss.num = sapply(training[,sapply(training,class) ==
+"numeric"],function(x) sum(is.na(x))) / nrow(training)
+# table(pcent.miss.num)
+##   0 0.979616536085101 
+##  27                61 
+## Exclude 61 variables with mostly NAs
+excl.num = names(pcent.miss.num[pcent.miss.num > 0.9])
+
+
+## Exclude variables by hand
+excl.man = c("raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp",
+    "user_name", "new_window", "num_window")
+
+## Filter variables based on excluded lists from above
+
+var.keep = names(training)[! names(training) %in% c(excl.char, excl.int,
+    excl.num,excl.man)]
+
+training = training[,var.keep]
+
+
+## Build predictive models
+
+library(caret)
+library(doMC)
+registerDoMC(cores = 8)
+
+## cores = 8
+## trs = (1:5)*100
+## rows = (1:5)*200
+## 
+## timing = data.frame(trs=numeric(0),rows=numeric(0),elapsed=numeric(0))
+## for (i in 1:length(trs)) {
+##     for (j in 1:length(rows)) {
+##         ix = (i-1)*length(rows) + j
+##         timing[ix,] = NA
+##         timing$trs[ix] = trs[i]
+##         timing$rows[ix] = rows[j]
+##         print(paste(ix,", trs",trs[i],", rows",rows[j])); flush.console()
+##         registerDoMC(cores = cores)
+##         t1 = as.numeric(Sys.time())
+##         m.rf = train(classe ~ ., method="rf",
+##             data=training[sample(1:nrow(training),rows[j]),],
+##             ntree=trs[i])
+##         t2 = as.numeric(Sys.time())
+##         timing$elapsed[ix] = t2 - t1
+##     }
+## }
+
+## These instruction take a while to run. Best to save the results so that they
+## don't have to be rerun
+# m.rf  = train(classe ~ ., method="rf", data=training,ntree=500)
+# m.gbm = train(classe ~ ., method="gbm",data=training)
+# m.lda = train(classe ~ ., method="lda",data=training)
+# save.image(file=paste0("image-",as.numeric(Sys.time()),".RData"))
+load("image-1437854467.6179.RData")
+
+
+## Predict class and probabilities of 3 individual models, and of stacked model
+
+pred.rf.c  = predict(m.rf , validation) 
+pred.gbm.c = predict(m.gbm, validation)
+pred.lda.c = predict(m.lda, validation)
+pred.rf.p  = predict(m.rf , validation, type="prob") 
+pred.gbm.p = predict(m.gbm, validation, type="prob")
+pred.lda.p = predict(m.lda, validation, type="prob")
+
+pred.stk.p = (pred.rf.p + pred.gbm.p + pred.lda.p)/3
+pred.stk.c = as.factor(names(pred.stk.p)[apply(pred.stk.p,1,
+    function(x) which(x == max(x)))])
+
+
+## Compute performance
+
+tbl.classes = c("All",levels(training$classe))
+acc.tbl = data.frame(
+    model=c("Random Forest","Boosted Trees","LDA","Stacked"),
+    stringsAsFactors=FALSE
+    )
+
+sens = function(pred,truth) {
+    sum(truth & (pred == truth))/sum(truth)
+}
+spec = function(pred,truth) {
+    sum(!truth & (pred == truth))/sum(!truth)
+}
+acc = function(pred,truth) {
+    sum(pred == truth)/length(pred)
+}
+
+acc.tbl$acc.all = c(
+    acc(pred.rf.c ,validation$classe),
+    acc(pred.gbm.c,validation$classe),
+    acc(pred.lda.c,validation$classe),
+    acc(pred.stk.c,validation$classe)
+    )
+
+for (i in 1:length(levels(validation$classe))) {
+    cl = levels(validation$classe)[i]
+    acc.tbl[,paste0("sens.",cl)] = c(
+                sens(pred.rf.c  == cl,validation$classe == cl),
+                sens(pred.gbm.c == cl,validation$classe == cl),
+                sens(pred.lda.c == cl,validation$classe == cl),
+                sens(pred.stk.c == cl,validation$classe == cl)
+                )
+    acc.tbl[,paste0("spec.",cl)] = c(
+                spec(pred.rf.c  == cl,validation$classe == cl),
+                spec(pred.gbm.c == cl,validation$classe == cl),
+                spec(pred.lda.c == cl,validation$classe == cl),
+                spec(pred.stk.c == cl,validation$classe == cl)
+                )
+    acc.tbl[,paste0("acc.",cl)] = c(
+                acc(pred.rf.c  == cl,validation$classe == cl),
+                acc(pred.gbm.c == cl,validation$classe == cl),
+                acc(pred.lda.c == cl,validation$classe == cl),
+                acc(pred.stk.c == cl,validation$classe == cl)
+                )
+}
+
+
+## Make predictions on the test set using the random forest model
+
+pred.submit = predict(m.rf,data.submit)
+for (i in 1:length(pred.submit)) {
+    write.table(pred.submit[i],
+                file=paste0("submitted-predictions/pred-",
+                    sprintf("%02d",i),".txt"),quote=FALSE,
+                row.names=FALSE,col.names=FALSE)
+}
+```
+
+
+# Executive Summary
+
+Here we investigate how well quality of physical exercise can be predicted from accelerometer measurements of wearable devices. Several predictive models were build from a dataset where subjects performed weight lifing either the correct way or in 5 different incorrect ways. In general exercise class could be predicted with very high accuracy. A model based on the random forest algorithm performed best, with sensitivities and specificities of 99 to 100% for all classes.
+
+# Introduction
+
+Wearable devices have become a popular means to track personal physical
+exercise. In addition to the amount and intensity of exercise, it is important
+to understand whether an exercise routine is being done correctly, in order to
+gain maximal benefit from it. We were interested to find out whether data
+recorded by accelerometers worn during exercise can be used to predict the
+quality of the exercise.
+
+# Methods
+
+The dataset used in this study comes from Uglino et al, Proc SBIA 2012, 52. It
+represents recordings of accelerometers placed on the belt, forearm, arm, and
+dumbell from 6 participants who were performing weight lifting. The lifts were
+done either correctly or incorrectly in 5 different ways.
+
+The data were divided into a training set for predictive model development,
+consisting of 80% of the data chosen at random. The rest of 20% were used for
+evaluating the performance of the models. The variable called "classe"
+represents the 6 types of activity quality (1 correct + 5 incorrect) and its
+values is the attribute we wanted to predict. All other variables or selected
+subsets were used as predictive features for model development.
+
+Three types of algorithms were chosen to build models: Random forest, boosted
+trees, and linear discriminant analysis (LDA). The first two are modern methods
+that perform well on a variety of problems that contain nonlinear
+relationships. LDA is a fast method suitable for problems with underlying linear
+relationships. In addition to the 3 individual algorithms, a stacked predictive
+mode was used, in which the class probabilities of the 3 individual models were
+averaged, and the class with the highest average was assigned as the outcome.
+
+# Results & Discussion
+
+An initial set of models was built using all variables which had at most 10%
+missing values as predictors. Examining the relative influence of variables in
+the models showed that raw_timestamp_part_1 and num_window had the highest
+influence. Both of these variables are related to the particulars of the
+experimental protocol that participants followed. The different types of
+activity quality were apparently executed in the same order, such that the
+relative times of measurements were strongly correlated with activity type.
+
+While this observation can be useful to make highly accurate predictions within
+the dataset, it does not address the main question of the study, which is the
+predictive power of accelerometer measurements. The second set of models
+therefore included only the variables that contained accelerometer
+measurements. The performance of each mdoel was evaluated on the testing set
+that was not used in model development. Three performance measures were computed
+for each model: sensitivity, specificity, and accuracty (see Table 1). These
+were computed for each activity class individually, and, in addition, an overall
+accuracy for all classes was computed as well. Although all models had excellent
+performance, in all cases the random forest model outperformed the boosted tree
+and the LDA model, as well as the stacked model.
+
+
+__Table 1.__ Performance evaluation of different predictive models
+
+```{r echo=FALSE, warning=FALSE}
+library(knitr)
+c.names = c("Model", "Acc All",
+    as.vector(outer(c("Sens","Spec","Acc"),levels(validation$classe),
+                    FUN="paste")))
+kable(acc.tbl,col.names=c.names,digits=3)
+```
+
